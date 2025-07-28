@@ -28,15 +28,56 @@ This project allows users to upload a PDF, automatically processes and chunks th
 
 ## 🚀 Getting Started
 
-### 1. Clone the Repo
+### Clone the Repo
 
 ```bash
 git clone https://github.com/your-username/pdf-rag-chainlit.git
-cd pdf-rag-chainlit```
+cd pdf-rag-chainlit
+```
 
-2. Create a Virtual Environment (Optional)
-bash
-Copy
-Edit
+### Create a Virtual Environment (Optional)
+```bash
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+Conda activate venv
+```
+
+###  Install Dependencies
+Create requirements.txt file and metion all the libararies line by line
+Install all dependencies at once:
+```bash
+pip install -r requirements.txt
+```
+Or manually install each library:
+
+```bash
+pip install langchain-community
+pip install pymupdf
+pip install pinecone-client
+pip install sentence-transformers
+pip install tqdm
+pip install chainlit
+pip install cohere
+pip install google-generativeai
+pip install requests
+```
+### 🔑 Set Your API Keys
+```bash
+COHERE_API_KEY = "your-cohere-api-key"
+PINECONE_API_KEY = "your-pinecone-api-key"
+client = genai.Client(api_key="your-google-api-key")
+```
+
+🚀 Run the App
+```bash
+chainlit run app.py
+```
+
+📂 File Structure
+```bash
+📁 pdf-rag-chainlit/
+├── app.py               # Main Chainlit app
+├── requirements.txt     # Required dependencies
+├── README.md            # Project documentation
+```
