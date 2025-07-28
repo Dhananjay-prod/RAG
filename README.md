@@ -44,7 +44,7 @@ Conda activate venv
 ```
 
 ###  Install Dependencies
-Create requirements.txt file and metion all the libararies line by line
+Create requirements.txt file and metion all the libararies line by line. 
 Install all dependencies at once:
 ```bash
 pip install -r requirements.txt
