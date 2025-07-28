@@ -32,4 +32,11 @@ This project allows users to upload a PDF, automatically processes and chunks th
 
 ```bash
 git clone https://github.com/your-username/pdf-rag-chainlit.git
-cd pdf-rag-chainlit
+cd pdf-rag-chainlit```
+
+2. Create a Virtual Environment (Optional)
+bash
+Copy
+Edit
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
