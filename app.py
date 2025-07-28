@@ -2,17 +2,18 @@ from langchain_community.document_loaders import PyMuPDFLoader
 from pinecone import Pinecone
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from sentence_transformers import SentenceTransformer
-import ollama
-import numpy as np
 from tqdm import tqdm
 import hashlib
 import chainlit as cl
-
-# Configuration
-# PDF_FILE = "DeepSeekR1.pdf"
-PDF_FILE = "os.pdf"
+import asyncio
+import requests
+import cohere
+from google import genai
+COHERE_API_KEY = "your_api_key"  # replace with your actual key
+co = cohere.Client(COHERE_API_KEY)
+client = genai.Client(api_key="your_api_key")
 PINECONE_API_KEY = "your_api_key"
-INDEX_NAME = "chatdatabase"
+INDEX_NAME = "your_index_name"
 
 # Initialize connections
 pc = Pinecone(api_key=PINECONE_API_KEY)
@@ -25,9 +26,7 @@ def get_pdf_hash(file_path):
         return hashlib.md5(f.read()).hexdigest()[:12]  # Use first 12 chars
 
 def check_embeddings_exist(pdf_hash):
-    """Check if embeddings for this PDF already exist"""
     try:
-        # Try to find any vector with this pdf_hash
         dummy_vector = [0.0] * 1024  # gte-large dimension
         results = index.query(
             vector=dummy_vector,
@@ -81,94 +80,82 @@ def create_and_store_embeddings(chunks, pdf_hash):
     
     print(f"✅ Stored {len(vectors)} embeddings")
 
-def query_system(question, top_k=5):
-    """Query the system and get answer"""
-    print(f"\n🔍 Question: {question}")
-    
-    # Create embedding for question
-    question_embedding = embedder.encode(question)
-    
-    # Search Pinecone
-    results = index.query(
-        vector=question_embedding.tolist(),
-        top_k=top_k,
-        include_metadata=True
-    )
-    
-    if not results.matches:
-        return "No relevant information found."
-    
-    # Get context from top results
-    context = "\n\n".join([match.metadata['text'] for match in results.matches])
-    
-    # Create prompt for Ollama
-    prompt = f"""Based on the following context, answer the question. If the answer is not in the context, say so.
+@cl.on_chat_start
+async def start():
+    files = None
 
-Context:
-{context}
+    while files == None:
+        files = await cl.AskFileMessage(
+            content="Please upload a text file to begin!", accept=["pdf"],
+            max_size_mb=40
+        ).send()
+    PDF_FILE = files[0]
 
-Question: {question}
+    # Let the user know that the system is ready
+    await cl.Message(
+        content=f"`{PDF_FILE.name}` successfully uploaded!"
+    ).send()
 
-Answer:"""
-    
-    # Generate answer with Ollama
-    print("🤖 Generating answer...")
-    try:
-        # Option 1: Ollama (local)
-        response = ollama.generate(model='llama3:latest', prompt=prompt)
-        answer = response['response']
-        
-        print(f"🎯 Answer: {answer}")
-        
-        return answer
-    except Exception as e:
-        print(f"❌ Error generating answer: {e}")
-        return "Error generating answer. Check if Ollama is running."
-
-# Main execution
-def main():
-    # Get PDF hash
-    pdf_hash = get_pdf_hash(PDF_FILE)
-    print(f"📋 PDF Hash: {pdf_hash}")
-    
-    # Check if embeddings already exist
-    if check_embeddings_exist(pdf_hash):
-        print("✅ Embeddings already exist, skipping creation")
-    else:
-        print("🆕 Creating new embeddings...")
-        chunks = create_chunks(PDF_FILE)
+    pdf_path = PDF_FILE.path
+    pdf_hash = get_pdf_hash(pdf_path)
+    if not check_embeddings_exist(pdf_hash):
+        chunks = create_chunks(pdf_path)
         create_and_store_embeddings(chunks, pdf_hash)
-    
-    # Query loop
-    print("\n🚀 System ready! Ask your questions (type 'quit' to exit)")
-    while True:
-        question = input("\n❓ Your question: ").strip()
+    await cl.Message(
+        content=f"`{PDF_FILE.name}` is processed. Enter your query"
+    ).send()     
+
+@cl.on_message
+async def main(message: cl.Message):
+    try:
+        message_embedding = embedder.encode(message.content)
+        results = index.query(
+            vector=message_embedding.tolist(),
+            top_k=5,
+            include_metadata=True
+        )
         
-        if question.lower() in ['quit', 'exit', 'q']:
-            break
-            
-        if question:
-            # Use query_system(question, use_ai=False) to skip AI and just see relevant chunks
-            query_system(question)
+        if not results.matches:
+            await cl.Message(content="No record found").send()
+            return
 
-if __name__ == "__main__":
-    main()
+        candidates = [match.metadata["text"] for match in results.matches]    
 
-# @cl.on_chat_start
-# async def start():
-#     files = None
+        rerank_response = co.rerank(
+            query=message.content,
+            documents=candidates,
+            top_n=3,
+            model="rerank-english-v2.0"
+        )
 
-#     # Wait for the user to upload a file
-#     while files == None:
-#         files = await cl.AskFileMessage(
-#             content="Please upload a text file to begin!", accept=["pdf"],
-#             max_size_mb=50
-#         ).send()
+        top_chunks = [results.matches[result.index].metadata["text"] for result in rerank_response.results]
 
-#     with open(text_file.path, "rb") as f:
-#         text = f.read()
+        context = "\n\n".join(top_chunks)
+        prompt = f"""Based on the following context, answer the question. If the answer is not in the context, say so.
+    
+        Context:
+        {context}
 
-#     # Let the user know that the system is ready
-#     await cl.Message(
-#         content=f"`{text_file.name}` successfully uploaded!"
-#     ).send()
+        Question: {message.content}"""
+    
+        loop = asyncio.get_running_loop()
+        
+        try:
+            response = await loop.run_in_executor(None, lambda: client.models.generate_content(model="gemini-2.0-flash",contents=[f"{prompt}"]))
+            answer = response.candidates[0].content.parts[0].text
+            msg = cl.Message(content="")
+            await msg.send()
+
+            for char in answer:
+                await msg.stream_token(char)
+                await asyncio.sleep(0.0001)  # adjust speed as needed
+
+            await msg.update()    
+        except requests.exceptions.ConnectionError:
+            await cl.Message(content="❌ Gemini API is not working").send()
+            return
+
+    except Exception as e:
+        await cl.Message(
+            content=f"Sorry, an error occurred: {str(e)}"
+        ).send()
